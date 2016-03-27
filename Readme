@@ -11,3 +11,4 @@ File Struectue:
 
 Progress:
 March 26    Finished root/utils/map_generator.py. Successfully generator csv file and png file with this code.
+March 27    Started to implement the CPU_Barnes.c

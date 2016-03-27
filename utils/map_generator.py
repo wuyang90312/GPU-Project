@@ -33,7 +33,7 @@ class map_generator:
         dim2 = self.randm_geo()
         mass = self.randm_mass()
         for i in range(self.num):
-            dim.append([dim1[i],dim2[i], mass[i]])
+            dim.append([float(dim1[i]),float(dim2[i]), float(mass[i])])
         
         return dim
 
@@ -46,10 +46,11 @@ def plot_pts(data, num):
     savefig('galaxy')
     close()
 
-mp = map_generator(1000, 400)
+num_pt = 10
+mp = map_generator(num_pt, 400)
 result = mp.map_gen()
 with open("map.csv", "wb") as f:
     writer = csv.writer(f)
     writer.writerows(result)
-plot_pts(result, 1000)
+plot_pts(result, num_pt)
 
