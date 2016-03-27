@@ -1,0 +1,10 @@
+This project is created in order to signify the advantage of parallism in the process of solving n-body problem. We are comparing the speeds of the serial all-pair Algorithm, serial Barnes-Hut Algorithm, and parallel Barnes-Hut Algorithm.
+
+File Struectue:
+/root:
+    serial_barnes.c
+    serial_all_pair.c
+    /utils:
+        map_generator.py
+        
+    
