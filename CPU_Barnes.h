@@ -10,5 +10,7 @@ typedef struct{
 }quadtree;
 
 int Barnes_Hut(Body* map, int size);
+int All_Pair(Body* galaxy, int size);
 void combine_quadtree(Body up_left, Body up_right, Body down_left, Body down_right, Body* parent);
+
 #endif
