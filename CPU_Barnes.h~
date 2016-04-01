@@ -1,5 +1,5 @@
-#ifndef _CPU_BARNES_H_
-#define _CPU_BARNES_H_
+#ifndef _ALL_PAIR_H_
+#define _ALL_PAIR_H_
 #include "utils.h"
 typedef struct{
     Body    current_body;   // current node which can be treated as a body with geo locations and mass
@@ -10,5 +10,7 @@ typedef struct{
 }quadtree;
 
 int Barnes_Hut(Body* map, int size);
-void combine_quadtree(Body up_left, Body up_right, Body down_left, Body down_right, Body parent);
+int All_Pair(Body* galaxy, int size);
+void combine_quadtree(Body up_left, Body up_right, Body down_left, Body down_right, Body* parent);
+
 #endif

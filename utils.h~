@@ -97,8 +97,8 @@ double cal_force(Body target, Body actor, double result[])
     force = actor.mass*target.mass/dist_sqr;    // calculate the force and omit the unviersal gravitational constant
     result[0] = force*dist_x/dist;  // force on x-coord toward actor
     result[1] = force*dist_y/dist;  // force on y-coord toward actor
-   // printf("\nThe target is (%lf, %lf)   with %lf\n", target.posX, target.posY, target.mass);
-   // printf("\nThe force is %lf\n", force);
+    printf("\nThe target is (%lf, %lf)   with %lf\n", target.posX, target.posY, target.mass);
+    printf("\nThe force is %lf\n", force);
     return dist;
 }
 
