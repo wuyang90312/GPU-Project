@@ -46,7 +46,7 @@ def plot_pts(data, num):
     savefig('galaxy')
     close()
 
-num_pt = 10
+num_pt = 10000
 mp = map_generator(num_pt, 400)
 result = mp.map_gen()
 with open("map.csv", "wb") as f:

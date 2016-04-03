@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
 
 #define     FALSE   -1
 #define     TRUE    0
@@ -87,7 +88,7 @@ double cal_force(Body target, Body actor, double result[])
     dist_x = actor.posX - target.posX;  // distance in x-coordinate, point to the actor
     dist_y = actor.posY - target.posY;  // distance in y-coordinate, point to the actor
     dist_sqr = pow(dist_x, 2) + pow(dist_y, 2);  // squared value of distance b/t actor and target
-    
+    //printf("dist x,y: %lf-%lf=%lf, %lf => %lf\n", actor.posX, target.posX, dist_x, dist_y, dist_sqr);
     if(dist_sqr == 0) // in case of 2 bodies are in exactly the same positions
     {
         printf("\n [ERROR] Bodies are overlapped \n");
