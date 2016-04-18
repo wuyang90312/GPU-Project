@@ -60,10 +60,10 @@ Author: Martin Burtscher
 
 /******************************************************************************/
 
-// childd is aliased with velxd, velyd, velzd, frcxd, frcyd, and sortd but they never use the same memory locations
+// childd is aliased with frcxd, frcyd, and sortd but they never use the same memory locations
 __constant__ int nnodesd, nbodiesd;
 __constant__ float dtimed, dthfd, epssqd, itolsqd;
-__constant__ volatile float *massd, *posxd, *posyd, *poszd, *velxd, *velyd, *velzd, *frcxd, *frcyd;
+__constant__ volatile float *massd, *posxd, *posyd, *poszd, *frcxd, *frcyd;
 __constant__ volatile float *maxxd, *maxyd, *maxzd, *minxd, *minyd, *minzd;
 __constant__ volatile int *errd, *sortd, *childd, *countd, *startd;
 
@@ -509,12 +509,6 @@ void ForceCalculationKernel()
         depth--;  // done with this level
       }
 
-      if (step > 0) {
-        // update velocity
-        velxd[i] += (frcx - frcxd[i]) * dthfd;
-        velyd[i] += (frcy - frcyd[i]) * dthfd;
-      }
-
       // save computed force
       frcxd[i] = frcx;
       frcyd[i] = frcy;
@@ -524,7 +518,7 @@ void ForceCalculationKernel()
 
 
 /******************************************************************************/
-/*** advance bodies ***********************************************************/
+/*** store the force onto the position array and store it back*****************/
 /******************************************************************************/
 
 __global__
@@ -532,27 +526,13 @@ __launch_bounds__(THREADS6, FACTOR6)
 void IntegrationKernel()
 {
   register int i, inc;
-  register float dvelx, dvely;
-  register float velhx, velhy;
 
   // iterate over all bodies assigned to thread
   inc = blockDim.x * gridDim.x;
   for (i = threadIdx.x + blockIdx.x * blockDim.x; i < nbodiesd; i += inc) {
-    // integrate
-    dvelx = frcxd[i] * dthfd;
-    dvely = frcyd[i] * dthfd;
-
-    velhx = velxd[i] + dvelx;
-    velhy = velyd[i] + dvely;
-
-    //posxd[i] += velhx * dtimed;
-    //posyd[i] += velhy * dtimed;
 
     posxd[i] = frcxd[i];
     posyd[i] = frcyd[i];
-
-    velxd[i] = velhx + dvelx;
-    velyd[i] = velhy + dvely;
   }
 }
 
@@ -577,289 +557,231 @@ static void CudaTest(char *msg)
 
 int main(int argc, char *argv[])
 {
-  register int i, run, blocks;
-  register int nnodes, nbodies, step, timesteps;
-  register int runtime, mintime;
-  int error;
-  register float dtime, dthf, epssq, itolsq;
-  float time, timing[7];
-  clock_t starttime, endtime;
-  cudaEvent_t start, stop;
-  float *mass, *posx, *posy, *velx, *vely;
+	register int i, blocks;
+	register int nnodes, nbodies, step, timesteps;
+	register int runtime;
+	int error;
+	register float dtime, dthf, epssq, itolsq;
+	float time, timing[7];
+	clock_t starttime, endtime;
+	cudaEvent_t start, stop;
+	float *mass, *posx, *posy;
 
-  int *errl, *sortl, *childl, *countl, *startl;
-  float *massl;
-  float *posxl, *posyl;
-  float *velxl, *velyl;
-  float *frcxl, *frcyl;
-  float *maxxl, *maxyl;
-  float *minxl, *minyl;  
-
-    Body* galaxy;
-        
-
-                                                    
+	int *errl, *sortl, *childl, *countl, *startl;
+	float *massl;
+	float *posxl, *posyl;
+	float *frcxl, *frcyl;
+	float *maxxl, *maxyl;
+	float *minxl, *minyl;  
+	Body* galaxy;
+		                                                                        
+                                                                                                     
                                                                                                           
-  // perform some checks                                                                                  
-                                                                                                          
-  fprintf(stderr, "CUDA BarnesHut v2.1\n");                                                               
-  if (argc != 3) {                                                                                        
-    fprintf(stderr, "\n");                                                                                
-    fprintf(stderr, "arguments: number_of_bodies number_of_timesteps\n");                                 
-    exit(-1);                                                                                             
-  }                                                                                                       
-                                                                                                          
-  int deviceCount;                                                                                        
-  cudaGetDeviceCount(&deviceCount);                                                                       
-  if (deviceCount == 0) {                                                                                 
-    fprintf(stderr, "There is no device supporting CUDA\n");
-    exit(-1);
-  }
-  cudaDeviceProp deviceProp;
-  cudaGetDeviceProperties(&deviceProp, 0);
-  if ((deviceProp.major == 9999) && (deviceProp.minor == 9999)) {
-    fprintf(stderr, "There is no CUDA capable device\n");
-    exit(-1);
-  }
-  if (deviceProp.major < 2) {
-    fprintf(stderr, "Need at least compute capability 2.0\n");
-    exit(-1);
-  }
-  if (deviceProp.warpSize != WARPSIZE) {
-    fprintf(stderr, "Warp size must be %d\n", deviceProp.warpSize);
-    exit(-1);
-  }
+	int deviceCount;                                                                                        
+	cudaGetDeviceCount(&deviceCount);                                                                       
 
-  blocks = deviceProp.multiProcessorCount;
-  fprintf(stderr, "blocks = %d\n", blocks);
+	cudaDeviceProp deviceProp;
+	cudaGetDeviceProperties(&deviceProp, 0);
 
-  if ((WARPSIZE <= 0) || (WARPSIZE & (WARPSIZE-1) != 0)) {
-    fprintf(stderr, "Warp size must be greater than zero and a power of two\n");
-    exit(-1);
-  }
-  if (MAXDEPTH > WARPSIZE) {
-    fprintf(stderr, "MAXDEPTH must be less than or equal to WARPSIZE\n");
-    exit(-1);
-  }
-  if ((THREADS1 <= 0) || (THREADS1 & (THREADS1-1) != 0)) {
-    fprintf(stderr, "THREADS1 must be greater than zero and a power of two\n");
-    exit(-1);
-  }
 
-  // set L1/shared memory configuration
-  cudaFuncSetCacheConfig(BoundingBoxKernel, cudaFuncCachePreferShared);
-  cudaFuncSetCacheConfig(TreeBuildingKernel, cudaFuncCachePreferL1);
-  cudaFuncSetCacheConfig(SummarizationKernel, cudaFuncCachePreferShared);
-  cudaFuncSetCacheConfig(SortKernel, cudaFuncCachePreferL1);
-  cudaFuncSetCacheConfig(ForceCalculationKernel, cudaFuncCachePreferL1);
-  cudaFuncSetCacheConfig(IntegrationKernel, cudaFuncCachePreferL1);
+	blocks = deviceProp.multiProcessorCount;
 
-  cudaGetLastError();  // reset error value
-  for (run = 0; run < 3; run++) {
-    for (i = 0; i < 7; i++) timing[i] = 0.0f;
 
-    nbodies = atoi(argv[1]);
-    if (nbodies < 1) {
-      fprintf(stderr, "nbodies is too small: %d\n", nbodies);
-      exit(-1);
-    }
-    if (nbodies > (1 << 30)) {
-      fprintf(stderr, "nbodies is too large: %d\n", nbodies);
-      exit(-1);
-    }
-    nnodes = nbodies * 2;
-    if (nnodes < 1024*blocks) nnodes = 1024*blocks;
-    while ((nnodes & (WARPSIZE-1)) != 0) nnodes++;
-    nnodes--;
+	// set L1/shared memory configuration
+	cudaFuncSetCacheConfig(BoundingBoxKernel, cudaFuncCachePreferShared);
+	cudaFuncSetCacheConfig(TreeBuildingKernel, cudaFuncCachePreferL1);
+	cudaFuncSetCacheConfig(SummarizationKernel, cudaFuncCachePreferShared);
+	cudaFuncSetCacheConfig(SortKernel, cudaFuncCachePreferL1);
+	cudaFuncSetCacheConfig(ForceCalculationKernel, cudaFuncCachePreferL1);
+	cudaFuncSetCacheConfig(IntegrationKernel, cudaFuncCachePreferL1);
 
-    timesteps = atoi(argv[2]);
-    dtime = 0.025;  dthf = dtime * 0.5f;
-    epssq = 0.001 * 0.001;
-    itolsq = 1.0f / (0.5 * 0.5);
-    // allocate memory
-    galaxy = (Body*)calloc(nbodies,sizeof(Body));
-    // read data from csv file
-    if(read_csv(galaxy))
-        return FALSE;   // if the function fail, return false
+	cudaGetLastError();  // reset error value
+
+	for (i = 0; i < 7; i++) timing[i] = 0.0f;
+
+	nbodies = atoi(argv[1]);
+	if (nbodies < 1) {
+	fprintf(stderr, "nbodies is too small: %d\n", nbodies);
+	exit(-1);
+	}
+	if (nbodies > (1 << 30)) {
+	fprintf(stderr, "nbodies is too large: %d\n", nbodies);
+	exit(-1);
+	}
+	nnodes = nbodies * 2;
+	if (nnodes < 1024*blocks) nnodes = 1024*blocks;
+	while ((nnodes & (WARPSIZE-1)) != 0) nnodes++;
+	nnodes--;
+
+	timesteps = atoi(argv[2]);
+	dtime = 0.025;  dthf = dtime * 0.5f;
+	epssq = 0.001 * 0.001;
+	itolsq = 1.0f / (0.5 * 0.5);
+	// allocate memory
+	galaxy = (Body*)calloc(nbodies,sizeof(Body));
+	// read data from csv file
+	if(read_csv(galaxy))
+	return FALSE;   // if the function fail, return false
+
+	if(galaxy == NULL)
+	{
+	printf("\n [ERROR] Empty Space \n");
+	return FALSE;
+	}
+
+	fprintf(stderr, "nodes = %d\n", nnodes+1);
+	fprintf(stderr, "configuration: %d bodies, %d time steps\n", nbodies, timesteps);
+
+	mass = (float *)malloc(sizeof(float) * nbodies);
+	if (mass == NULL) {fprintf(stderr, "cannot allocate mass\n");  exit(-1);}
+	posx = (float *)malloc(sizeof(float) * nbodies);
+	if (posx == NULL) {fprintf(stderr, "cannot allocate posx\n");  exit(-1);}
+	posy = (float *)malloc(sizeof(float) * nbodies);
+	if (posy == NULL) {fprintf(stderr, "cannot allocate posy\n");  exit(-1);}
+
+	if (cudaSuccess != cudaMalloc((void **)&errl, sizeof(int))) fprintf(stderr, "could not allocate errd\n");  CudaTest("couldn't allocate errd");
+	if (cudaSuccess != cudaMalloc((void **)&childl, sizeof(int) * (nnodes+1) * 8)) fprintf(stderr, "could not allocate childd\n");  CudaTest("couldn't allocate childd");
+	if (cudaSuccess != cudaMalloc((void **)&massl, sizeof(float) * (nnodes+1))) fprintf(stderr, "could not allocate massd\n");  CudaTest("couldn't allocate massd");
+	if (cudaSuccess != cudaMalloc((void **)&posxl, sizeof(float) * (nnodes+1))) fprintf(stderr, "could not allocate posxd\n");  CudaTest("couldn't allocate posxd");
+	if (cudaSuccess != cudaMalloc((void **)&posyl, sizeof(float) * (nnodes+1))) fprintf(stderr, "could not allocate posyd\n");  CudaTest("couldn't allocate posyd");
+	if (cudaSuccess != cudaMalloc((void **)&countl, sizeof(int) * (nnodes+1))) fprintf(stderr, "could not allocate countd\n");  CudaTest("couldn't allocate countd");
+	if (cudaSuccess != cudaMalloc((void **)&startl, sizeof(int) * (nnodes+1))) fprintf(stderr, "could not allocate startd\n");  CudaTest("couldn't allocate startd");
+
+	// alias arrays
+	int inc = (nbodies + WARPSIZE - 1) & (-WARPSIZE);
+	frcxl = (float *)&childl[0*inc];
+	frcyl = (float *)&childl[1*inc];
+	sortl = (int *)&childl[2*inc];
+
+	if (cudaSuccess != cudaMalloc((void **)&maxxl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate maxxd\n");  CudaTest("couldn't allocate maxxd");
+	if (cudaSuccess != cudaMalloc((void **)&maxyl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate maxyd\n");  CudaTest("couldn't allocate maxyd");
+	if (cudaSuccess != cudaMalloc((void **)&minxl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate minxd\n");  CudaTest("couldn't allocate minxd");
+	if (cudaSuccess != cudaMalloc((void **)&minyl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate minyd\n");  CudaTest("couldn't allocate minyd");
+
+	if (cudaSuccess != cudaMemcpyToSymbol(nnodesd, &nnodes, sizeof(int))) fprintf(stderr, "copying of nnodes to device failed\n");  CudaTest("nnode copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(nbodiesd, &nbodies, sizeof(int))) fprintf(stderr, "copying of nbodies to device failed\n");  CudaTest("nbody copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(errd, &errl, sizeof(void*))) fprintf(stderr, "copying of err to device failed\n");  CudaTest("err copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(dtimed, &dtime, sizeof(float))) fprintf(stderr, "copying of dtime to device failed\n");  CudaTest("dtime copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(dthfd, &dthf, sizeof(float))) fprintf(stderr, "copying of dthf to device failed\n");  CudaTest("dthf copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(epssqd, &epssq, sizeof(float))) fprintf(stderr, "copying of epssq to device failed\n");  CudaTest("epssq copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(itolsqd, &itolsq, sizeof(float))) fprintf(stderr, "copying of itolsq to device failed\n");  CudaTest("itolsq copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(sortd, &sortl, sizeof(void*))) fprintf(stderr, "copying of sortl to device failed\n");  CudaTest("sortl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(countd, &countl, sizeof(void*))) fprintf(stderr, "copying of countl to device failed\n");  CudaTest("countl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(startd, &startl, sizeof(void*))) fprintf(stderr, "copying of startl to device failed\n");  CudaTest("startl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(childd, &childl, sizeof(void*))) fprintf(stderr, "copying of childl to device failed\n");  CudaTest("childl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(massd, &massl, sizeof(void*))) fprintf(stderr, "copying of massl to device failed\n");  CudaTest("massl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(posxd, &posxl, sizeof(void*))) fprintf(stderr, "copying of posxl to device failed\n");  CudaTest("posxl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(posyd, &posyl, sizeof(void*))) fprintf(stderr, "copying of posyl to device failed\n");  CudaTest("posyl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(frcxd, &frcxl, sizeof(void*))) fprintf(stderr, "copying of frcxl to device failed\n");  CudaTest("frcxl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(frcyd, &frcyl, sizeof(void*))) fprintf(stderr, "copying of frcyl to device failed\n");  CudaTest("frcyl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(maxxd, &maxxl, sizeof(void*))) fprintf(stderr, "copying of maxxl to device failed\n");  CudaTest("maxxl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(maxyd, &maxyl, sizeof(void*))) fprintf(stderr, "copying of maxyl to device failed\n");  CudaTest("maxyl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(minxd, &minxl, sizeof(void*))) fprintf(stderr, "copying of minxl to device failed\n");  CudaTest("minxl copy to device failed");
+	if (cudaSuccess != cudaMemcpyToSymbol(minyd, &minyl, sizeof(void*))) fprintf(stderr, "copying of minyl to device failed\n");  CudaTest("minyl copy to device failed");
+ 
+
+	for (i = 0; i < nbodies; i++){
+		posx[i] = galaxy[i].posX;
+		posy[i] = galaxy[i].posY;
+		mass[i] = galaxy[i].mass;
+	}
+
+	if (cudaSuccess != cudaMemcpy(massl, mass, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of mass to device failed\n");  CudaTest("mass copy to device failed");
+	if (cudaSuccess != cudaMemcpy(posxl, posx, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of posx to device failed\n");  CudaTest("posx copy to device failed");
+	if (cudaSuccess != cudaMemcpy(posyl, posy, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of posy to device failed\n");  CudaTest("posy copy to device failed");
+
     
-    if(galaxy == NULL)
-    {
-        printf("\n [ERROR] Empty Space \n");
-        return FALSE;
-    }
-    if (run == 0) {
-      fprintf(stderr, "nodes = %d\n", nnodes+1);
-      fprintf(stderr, "configuration: %d bodies, %d time steps\n", nbodies, timesteps);
+	// run timesteps (lauch GPU kernels)
 
-      mass = (float *)malloc(sizeof(float) * nbodies);
-      if (mass == NULL) {fprintf(stderr, "cannot allocate mass\n");  exit(-1);}
-      posx = (float *)malloc(sizeof(float) * nbodies);
-      if (posx == NULL) {fprintf(stderr, "cannot allocate posx\n");  exit(-1);}
-      posy = (float *)malloc(sizeof(float) * nbodies);
-      if (posy == NULL) {fprintf(stderr, "cannot allocate posy\n");  exit(-1);}
-      velx = (float *)malloc(sizeof(float) * nbodies);
-      if (velx == NULL) {fprintf(stderr, "cannot allocate velx\n");  exit(-1);}
-      vely = (float *)malloc(sizeof(float) * nbodies);
-      if (vely == NULL) {fprintf(stderr, "cannot allocate vely\n");  exit(-1);}
+	cudaEventCreate(&start);  cudaEventCreate(&stop);  
+	starttime = clock();
+	cudaEventRecord(start, 0);
+	InitializationKernel<<<1, 1>>>();
+	cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+	timing[0] += time;
+	CudaTest("kernel 0 launch failed");
 
-      if (cudaSuccess != cudaMalloc((void **)&errl, sizeof(int))) fprintf(stderr, "could not allocate errd\n");  CudaTest("couldn't allocate errd");
-      if (cudaSuccess != cudaMalloc((void **)&childl, sizeof(int) * (nnodes+1) * 8)) fprintf(stderr, "could not allocate childd\n");  CudaTest("couldn't allocate childd");
-      if (cudaSuccess != cudaMalloc((void **)&massl, sizeof(float) * (nnodes+1))) fprintf(stderr, "could not allocate massd\n");  CudaTest("couldn't allocate massd");
-      if (cudaSuccess != cudaMalloc((void **)&posxl, sizeof(float) * (nnodes+1))) fprintf(stderr, "could not allocate posxd\n");  CudaTest("couldn't allocate posxd");
-      if (cudaSuccess != cudaMalloc((void **)&posyl, sizeof(float) * (nnodes+1))) fprintf(stderr, "could not allocate posyd\n");  CudaTest("couldn't allocate posyd");
-      if (cudaSuccess != cudaMalloc((void **)&countl, sizeof(int) * (nnodes+1))) fprintf(stderr, "could not allocate countd\n");  CudaTest("couldn't allocate countd");
-      if (cudaSuccess != cudaMalloc((void **)&startl, sizeof(int) * (nnodes+1))) fprintf(stderr, "could not allocate startd\n");  CudaTest("couldn't allocate startd");
+	for (step = 0; step < timesteps; step++) {
+		cudaEventRecord(start, 0);
+		BoundingBoxKernel<<<blocks * FACTOR1, THREADS1>>>();
+		cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+		timing[1] += time;
+		CudaTest("kernel 1 launch failed");
 
-      // alias arrays
-      int inc = (nbodies + WARPSIZE - 1) & (-WARPSIZE);
-      velxl = (float *)&childl[0*inc];
-      velyl = (float *)&childl[1*inc];
-      frcxl = (float *)&childl[2*inc];
-      frcyl = (float *)&childl[3*inc];
-      sortl = (int *)&childl[4*inc];
+		cudaEventRecord(start, 0);
+		TreeBuildingKernel<<<blocks * FACTOR2, THREADS2>>>();
+		cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+		timing[2] += time;
+		CudaTest("kernel 2 launch failed");
 
-      if (cudaSuccess != cudaMalloc((void **)&maxxl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate maxxd\n");  CudaTest("couldn't allocate maxxd");
-      if (cudaSuccess != cudaMalloc((void **)&maxyl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate maxyd\n");  CudaTest("couldn't allocate maxyd");
-      if (cudaSuccess != cudaMalloc((void **)&minxl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate minxd\n");  CudaTest("couldn't allocate minxd");
-      if (cudaSuccess != cudaMalloc((void **)&minyl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate minyd\n");  CudaTest("couldn't allocate minyd");
+		cudaEventRecord(start, 0);
+		SummarizationKernel<<<blocks * FACTOR3, THREADS3>>>();
+		cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+		timing[3] += time;
+		CudaTest("kernel 3 launch failed");
 
-      if (cudaSuccess != cudaMemcpyToSymbol(nnodesd, &nnodes, sizeof(int))) fprintf(stderr, "copying of nnodes to device failed\n");  CudaTest("nnode copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(nbodiesd, &nbodies, sizeof(int))) fprintf(stderr, "copying of nbodies to device failed\n");  CudaTest("nbody copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(errd, &errl, sizeof(void*))) fprintf(stderr, "copying of err to device failed\n");  CudaTest("err copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(dtimed, &dtime, sizeof(float))) fprintf(stderr, "copying of dtime to device failed\n");  CudaTest("dtime copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(dthfd, &dthf, sizeof(float))) fprintf(stderr, "copying of dthf to device failed\n");  CudaTest("dthf copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(epssqd, &epssq, sizeof(float))) fprintf(stderr, "copying of epssq to device failed\n");  CudaTest("epssq copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(itolsqd, &itolsq, sizeof(float))) fprintf(stderr, "copying of itolsq to device failed\n");  CudaTest("itolsq copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(sortd, &sortl, sizeof(void*))) fprintf(stderr, "copying of sortl to device failed\n");  CudaTest("sortl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(countd, &countl, sizeof(void*))) fprintf(stderr, "copying of countl to device failed\n");  CudaTest("countl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(startd, &startl, sizeof(void*))) fprintf(stderr, "copying of startl to device failed\n");  CudaTest("startl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(childd, &childl, sizeof(void*))) fprintf(stderr, "copying of childl to device failed\n");  CudaTest("childl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(massd, &massl, sizeof(void*))) fprintf(stderr, "copying of massl to device failed\n");  CudaTest("massl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(posxd, &posxl, sizeof(void*))) fprintf(stderr, "copying of posxl to device failed\n");  CudaTest("posxl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(posyd, &posyl, sizeof(void*))) fprintf(stderr, "copying of posyl to device failed\n");  CudaTest("posyl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(velxd, &velxl, sizeof(void*))) fprintf(stderr, "copying of velxl to device failed\n");  CudaTest("velxl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(velyd, &velyl, sizeof(void*))) fprintf(stderr, "copying of velyl to device failed\n");  CudaTest("velyl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(frcxd, &frcxl, sizeof(void*))) fprintf(stderr, "copying of frcxl to device failed\n");  CudaTest("frcxl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(frcyd, &frcyl, sizeof(void*))) fprintf(stderr, "copying of frcyl to device failed\n");  CudaTest("frcyl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(maxxd, &maxxl, sizeof(void*))) fprintf(stderr, "copying of maxxl to device failed\n");  CudaTest("maxxl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(maxyd, &maxyl, sizeof(void*))) fprintf(stderr, "copying of maxyl to device failed\n");  CudaTest("maxyl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(minxd, &minxl, sizeof(void*))) fprintf(stderr, "copying of minxl to device failed\n");  CudaTest("minxl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(minyd, &minyl, sizeof(void*))) fprintf(stderr, "copying of minyl to device failed\n");  CudaTest("minyl copy to device failed");
-    }
+		cudaEventRecord(start, 0);
+		SortKernel<<<blocks * FACTOR4, THREADS4>>>();
+		cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+		timing[4] += time;
+		CudaTest("kernel 4 launch failed");
 
-    for (i = 0; i < nbodies; i++){
-        posx[i] = galaxy[i].posX;
-        posy[i] = galaxy[i].posY;
-        mass[i] = galaxy[i].mass;
-	velx[i] = 0;
-	vely[i] = 0;
-    }
+		cudaEventRecord(start, 0);
+		ForceCalculationKernel<<<blocks * FACTOR5, THREADS5>>>();
+		cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+		timing[5] += time;
+		CudaTest("kernel 5 launch failed");
 
-    if (cudaSuccess != cudaMemcpy(massl, mass, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of mass to device failed\n");  CudaTest("mass copy to device failed");
-    if (cudaSuccess != cudaMemcpy(posxl, posx, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of posx to device failed\n");  CudaTest("posx copy to device failed");
-    if (cudaSuccess != cudaMemcpy(posyl, posy, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of posy to device failed\n");  CudaTest("posy copy to device failed");
-    if (cudaSuccess != cudaMemcpy(velxl, velx, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of velx to device failed\n");  CudaTest("velx copy to device failed");
-    if (cudaSuccess != cudaMemcpy(velyl, vely, sizeof(float) * nbodies, cudaMemcpyHostToDevice)) fprintf(stderr, "copying of vely to device failed\n");  CudaTest("vely copy to device failed");
-    
-    // run timesteps (lauch GPU kernels)
+		cudaEventRecord(start, 0);
+		IntegrationKernel<<<blocks * FACTOR6, THREADS6>>>();
+		cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
+		timing[6] += time;
+		CudaTest("kernel 6 launch failed");
+	}
+	endtime = clock();
+	CudaTest("kernel launch failed");
+	cudaEventDestroy(start);  cudaEventDestroy(stop);
 
-    cudaEventCreate(&start);  cudaEventCreate(&stop);  
-    starttime = clock();
-    cudaEventRecord(start, 0);
-    InitializationKernel<<<1, 1>>>();
-    cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-    timing[0] += time;
-    CudaTest("kernel 0 launch failed");
+	// transfer result back to CPU
+	if (cudaSuccess != cudaMemcpy(&error, errl, sizeof(int), cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of err from device failed\n");  CudaTest("err copy from device failed");
+	if (cudaSuccess != cudaMemcpy(posx, posxl, sizeof(float) * nbodies, cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of posx from device failed\n");  CudaTest("posx copy from device failed");
+	if (cudaSuccess != cudaMemcpy(posy, posyl, sizeof(float) * nbodies, cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of posy from device failed\n");  CudaTest("posy copy from device failed");
 
-    for (step = 0; step < timesteps; step++) {
-      cudaEventRecord(start, 0);
-      BoundingBoxKernel<<<blocks * FACTOR1, THREADS1>>>();
-      cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-      timing[1] += time;
-      CudaTest("kernel 1 launch failed");
+	runtime = (int) (1000.0f * (endtime - starttime) / CLOCKS_PER_SEC);
+	fprintf(stderr, "runtime: %d ms  (", runtime);
+	time = 0;
+	for (i = 1; i < 7; i++) {
+		fprintf(stderr, " %.1f ", timing[i]);
+		time += timing[i];
+	}
+	if (error == 0) {
+		fprintf(stderr, ") = %.1f\n", time);
+	} else {
+		fprintf(stderr, ") = %.1f FAILED %d\n", time, error);
+	}
 
-      cudaEventRecord(start, 0);
-      TreeBuildingKernel<<<blocks * FACTOR2, THREADS2>>>();
-      cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-      timing[2] += time;
-      CudaTest("kernel 2 launch failed");
 
-      cudaEventRecord(start, 0);
-      SummarizationKernel<<<blocks * FACTOR3, THREADS3>>>();
-      cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-      timing[3] += time;
-      CudaTest("kernel 3 launch failed");
+	// print output
+	for (i = nbodies-10; i < nbodies; i++) {
+		printf("%d:   %f %f \n",i,  posx[i], posy[i]);
+	}
 
-      cudaEventRecord(start, 0);
-      SortKernel<<<blocks * FACTOR4, THREADS4>>>();
-      cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-      timing[4] += time;
-      CudaTest("kernel 4 launch failed");
+	free(mass);
+	free(posx);
+	free(posy);
 
-      cudaEventRecord(start, 0);
-      ForceCalculationKernel<<<blocks * FACTOR5, THREADS5>>>();
-      cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-      timing[5] += time;
-      CudaTest("kernel 5 launch failed");
+	cudaFree(errl);
+	cudaFree(childl);
+	cudaFree(massl);
+	cudaFree(posxl);
+	cudaFree(posyl);
+	cudaFree(countl);
+	cudaFree(startl);
 
-      cudaEventRecord(start, 0);
-      IntegrationKernel<<<blocks * FACTOR6, THREADS6>>>();
-      cudaEventRecord(stop, 0);  cudaEventSynchronize(stop);  cudaEventElapsedTime(&time, start, stop);
-      timing[6] += time;
-      CudaTest("kernel 6 launch failed");
-    }
-    endtime = clock();
-    CudaTest("kernel launch failed");
-    cudaEventDestroy(start);  cudaEventDestroy(stop);
+	cudaFree(maxxl);
+	cudaFree(maxyl);
+	cudaFree(minxl);
+	cudaFree(minyl);
 
-    // transfer result back to CPU
-    if (cudaSuccess != cudaMemcpy(&error, errl, sizeof(int), cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of err from device failed\n");  CudaTest("err copy from device failed");
-    if (cudaSuccess != cudaMemcpy(posx, posxl, sizeof(float) * nbodies, cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of posx from device failed\n");  CudaTest("posx copy from device failed");
-    if (cudaSuccess != cudaMemcpy(posy, posyl, sizeof(float) * nbodies, cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of posy from device failed\n");  CudaTest("posy copy from device failed");
-    if (cudaSuccess != cudaMemcpy(velx, velxl, sizeof(float) * nbodies, cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of velx from device failed\n");  CudaTest("velx copy from device failed");
-    if (cudaSuccess != cudaMemcpy(vely, velyl, sizeof(float) * nbodies, cudaMemcpyDeviceToHost)) fprintf(stderr, "copying of vely from device failed\n");  CudaTest("vely copy from device failed");
-    
-    runtime = (int) (1000.0f * (endtime - starttime) / CLOCKS_PER_SEC);
-    fprintf(stderr, "runtime: %d ms  (", runtime);
-    time = 0;
-    for (i = 1; i < 7; i++) {
-      fprintf(stderr, " %.1f ", timing[i]);
-      time += timing[i];
-    }
-    if (error == 0) {
-      fprintf(stderr, ") = %.1f\n", time);
-    } else {
-      fprintf(stderr, ") = %.1f FAILED %d\n", time, error);
-    }
-
-    if ((run == 0) || (mintime > runtime)) mintime = runtime;
-  }
-
-  fprintf(stderr, "mintime: %d ms\n", mintime);
-
-  // print output
-  for (i = 0; i < nbodies; i++) {
-    printf("%d:   %f %f \n",i,  posx[i], posy[i]);
-  }
-
-  free(mass);
-  free(posx);
-  free(posy);
-  free(velx);
-  free(vely);
-
-  cudaFree(errl);
-  cudaFree(childl);
-  cudaFree(massl);
-  cudaFree(posxl);
-  cudaFree(posyl);
-  cudaFree(countl);
-  cudaFree(startl);
-
-  cudaFree(maxxl);
-  cudaFree(maxyl);
-  cudaFree(minxl);
-  cudaFree(minyl);
-
-  return 0;
+	return 0;
 }
