@@ -60,10 +60,10 @@ Author: Martin Burtscher
 
 /******************************************************************************/
 
-// childd is aliased with velxd, velyd, velzd, accxd, accyd, acczd, and sortd but they never use the same memory locations
+// childd is aliased with velxd, velyd, velzd, frcxd, frcyd, and sortd but they never use the same memory locations
 __constant__ int nnodesd, nbodiesd;
 __constant__ float dtimed, dthfd, epssqd, itolsqd;
-__constant__ volatile float *massd, *posxd, *posyd, *poszd, *velxd, *velyd, *velzd, *accxd, *accyd, *acczd;
+__constant__ volatile float *massd, *posxd, *posyd, *poszd, *velxd, *velyd, *velzd, *frcxd, *frcyd;
 __constant__ volatile float *maxxd, *maxyd, *maxzd, *minxd, *minyd, *minzd;
 __constant__ volatile int *errd, *sortd, *childd, *countd, *startd;
 
@@ -421,7 +421,7 @@ __launch_bounds__(THREADS5, FACTOR5)
 void ForceCalculationKernel()
 {
   register int i, j, k, n, depth, base, sbase, diff;
-  register float px, py, ax, ay, dx, dy, tmp, mass;
+  register float px, py, frcx, frcy, dx, dy, tmp, mass;
   __shared__ volatile int pos[MAXDEPTH * THREADS5/WARPSIZE], node[MAXDEPTH * THREADS5/WARPSIZE];
   __shared__ volatile float dq[MAXDEPTH * THREADS5/WARPSIZE];
   __shared__ volatile int step, maxdepth;
@@ -463,8 +463,8 @@ void ForceCalculationKernel()
       py = posyd[i];
       mass = massd[i];
 
-      ax = 0.0f;
-      ay = 0.0f;
+      frcx = 0.0f;
+      frcy = 0.0f;
 
       // initialize iteration stack, i.e., push root node onto stack
       depth = j;
@@ -488,11 +488,11 @@ void ForceCalculationKernel()
             dx = posxd[n] - px;
             dy = posyd[n] - py;
             tmp = dx*dx + (dy*dy + epssqd);  // compute distance squared (plus softening)
-            if ((n < nbodiesd) || __all(tmp >= dq[depth])) {  // check if all threads agree that cell is far enough away (or is a body)
+            if ((n < nbodiesd) || __all(tmp >= dq[depth]*400)) {  // check if all threads agree that cell is far enough away (or is a body)
               tmp = rsqrtf(tmp);  // compute distance
               tmp = mass*massd[n] * tmp * tmp * tmp;
-              ax += dx *tmp;
-              ay += dy * tmp;
+              frcx += dx *tmp;
+              frcy += dy * tmp;
             } else {
               // push cell onto stack
               depth++;
@@ -511,13 +511,13 @@ void ForceCalculationKernel()
 
       if (step > 0) {
         // update velocity
-        velxd[i] += (ax - accxd[i]) * dthfd;
-        velyd[i] += (ay - accyd[i]) * dthfd;
+        velxd[i] += (frcx - frcxd[i]) * dthfd;
+        velyd[i] += (frcy - frcyd[i]) * dthfd;
       }
 
-      // save computed acceleration
-      accxd[i] = ax;
-      accyd[i] = ay;
+      // save computed force
+      frcxd[i] = frcx;
+      frcyd[i] = frcy;
     }
   }
 }
@@ -539,8 +539,8 @@ void IntegrationKernel()
   inc = blockDim.x * gridDim.x;
   for (i = threadIdx.x + blockIdx.x * blockDim.x; i < nbodiesd; i += inc) {
     // integrate
-    dvelx = accxd[i] * dthfd;
-    dvely = accyd[i] * dthfd;
+    dvelx = frcxd[i] * dthfd;
+    dvely = frcyd[i] * dthfd;
 
     velhx = velxd[i] + dvelx;
     velhy = velyd[i] + dvely;
@@ -548,8 +548,8 @@ void IntegrationKernel()
     //posxd[i] += velhx * dtimed;
     //posyd[i] += velhy * dtimed;
 
-    posxd[i] = accxd[i];
-    posyd[i] = accyd[i];
+    posxd[i] = frcxd[i];
+    posyd[i] = frcyd[i];
 
     velxd[i] = velhx + dvelx;
     velyd[i] = velhy + dvely;
@@ -572,38 +572,6 @@ static void CudaTest(char *msg)
 }
 
 
-/******************************************************************************/
-
-// random number generator
-
-#define MULT 1103515245
-#define ADD 12345
-#define MASK 0x7FFFFFFF
-#define TWOTO31 2147483648.0
-
-static int A = 1;
-static int B = 0;
-static int randx = 1;
-static int lastrand;
-
-
-static void drndset(int seed)
-{
-   A = 1;
-   B = 0;
-   randx = (A * seed + B) & MASK;
-   A = (MULT * A) & MASK;
-   B = (MULT * B + ADD) & MASK;
-}
-
-
-static double drnd()
-{
-   lastrand = randx;
-   randx = (A * randx + B) & MASK;
-   return (double)lastrand / TWOTO31;
-}
-
 
 /******************************************************************************/
 
@@ -623,10 +591,9 @@ int main(int argc, char *argv[])
   float *massl;
   float *posxl, *posyl;
   float *velxl, *velyl;
-  float *accxl, *accyl;
+  float *frcxl, *frcyl;
   float *maxxl, *maxyl;
-  float *minxl, *minyl;
-  register double rsc, vsc, r, v, x, y, sq, scale;     
+  float *minxl, *minyl;  
 
     Body* galaxy;
         
@@ -707,7 +674,7 @@ int main(int argc, char *argv[])
 
     timesteps = atoi(argv[2]);
     dtime = 0.025;  dthf = dtime * 0.5f;
-    epssq = 0.05 * 0.05;
+    epssq = 0.001 * 0.001;
     itolsq = 1.0f / (0.5 * 0.5);
     // allocate memory
     galaxy = (Body*)calloc(nbodies,sizeof(Body));
@@ -747,8 +714,8 @@ int main(int argc, char *argv[])
       int inc = (nbodies + WARPSIZE - 1) & (-WARPSIZE);
       velxl = (float *)&childl[0*inc];
       velyl = (float *)&childl[1*inc];
-      accxl = (float *)&childl[2*inc];
-      accyl = (float *)&childl[3*inc];
+      frcxl = (float *)&childl[2*inc];
+      frcyl = (float *)&childl[3*inc];
       sortl = (int *)&childl[4*inc];
 
       if (cudaSuccess != cudaMalloc((void **)&maxxl, sizeof(float) * blocks)) fprintf(stderr, "could not allocate maxxd\n");  CudaTest("couldn't allocate maxxd");
@@ -772,46 +739,13 @@ int main(int argc, char *argv[])
       if (cudaSuccess != cudaMemcpyToSymbol(posyd, &posyl, sizeof(void*))) fprintf(stderr, "copying of posyl to device failed\n");  CudaTest("posyl copy to device failed");
       if (cudaSuccess != cudaMemcpyToSymbol(velxd, &velxl, sizeof(void*))) fprintf(stderr, "copying of velxl to device failed\n");  CudaTest("velxl copy to device failed");
       if (cudaSuccess != cudaMemcpyToSymbol(velyd, &velyl, sizeof(void*))) fprintf(stderr, "copying of velyl to device failed\n");  CudaTest("velyl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(accxd, &accxl, sizeof(void*))) fprintf(stderr, "copying of accxl to device failed\n");  CudaTest("accxl copy to device failed");
-      if (cudaSuccess != cudaMemcpyToSymbol(accyd, &accyl, sizeof(void*))) fprintf(stderr, "copying of accyl to device failed\n");  CudaTest("accyl copy to device failed");
+      if (cudaSuccess != cudaMemcpyToSymbol(frcxd, &frcxl, sizeof(void*))) fprintf(stderr, "copying of frcxl to device failed\n");  CudaTest("frcxl copy to device failed");
+      if (cudaSuccess != cudaMemcpyToSymbol(frcyd, &frcyl, sizeof(void*))) fprintf(stderr, "copying of frcyl to device failed\n");  CudaTest("frcyl copy to device failed");
       if (cudaSuccess != cudaMemcpyToSymbol(maxxd, &maxxl, sizeof(void*))) fprintf(stderr, "copying of maxxl to device failed\n");  CudaTest("maxxl copy to device failed");
       if (cudaSuccess != cudaMemcpyToSymbol(maxyd, &maxyl, sizeof(void*))) fprintf(stderr, "copying of maxyl to device failed\n");  CudaTest("maxyl copy to device failed");
       if (cudaSuccess != cudaMemcpyToSymbol(minxd, &minxl, sizeof(void*))) fprintf(stderr, "copying of minxl to device failed\n");  CudaTest("minxl copy to device failed");
       if (cudaSuccess != cudaMemcpyToSymbol(minyd, &minyl, sizeof(void*))) fprintf(stderr, "copying of minyl to device failed\n");  CudaTest("minyl copy to device failed");
     }
-
-    // generate input
-/*
-    drndset(7);
-    rsc = (3 * 3.1415926535897932384626433832795) / 16;
-    vsc = sqrt(1.0 / rsc);
-    for (i = 0; i < nbodies; i++) {
-      mass[i] = 1.0 / nbodies;
-      r = 1.0 / sqrt(pow(drnd()*0.999, -2.0/3.0) - 1);
-      do {
-        x = drnd()*2.0 - 1.0;
-        y = drnd()*2.0 - 1.0;
-        sq = x*x + y*y;
-      } while (sq > 1.0);
-      scale = rsc * r / sqrt(sq);
-      posx[i] = x * scale;
-      posy[i] = y * scale;
-
-      do {
-        x = drnd();
-        y = drnd() * 0.1;
-      } while (y > x*x * pow(1 - x*x, 3.5));
-      v = x * sqrt(2.0 / sqrt(1 + r*r));
-      do {
-        x = drnd()*2.0 - 1.0;
-        y = drnd()*2.0 - 1.0;
-        sq = x*x + y*y;
-      } while (sq > 1.0);
-      scale = vsc * v / sqrt(sq);
-      velx[i] = x * scale;
-      vely[i] = y * scale;
-    }
-*/
 
     for (i = 0; i < nbodies; i++){
         posx[i] = galaxy[i].posX;
@@ -905,7 +839,7 @@ int main(int argc, char *argv[])
 
   // print output
   for (i = 0; i < nbodies; i++) {
-    printf("%d:   %.2e %.2e \n",i,  posx[i], posy[i]);
+    printf("%d:   %f %f \n",i,  posx[i], posy[i]);
   }
 
   free(mass);

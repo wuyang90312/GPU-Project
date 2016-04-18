@@ -74,7 +74,7 @@ int Barnes_Hut(Body* galaxy, int size)
     {
         //printf("\n>>>>>>>>>The galaxy %d has force (%lf, %lf)\n", i, galaxy[i].forceX, galaxy[i].forceY);
         cal_force_tree(root, &galaxy[i],  EDGE);
-        //printf(">>>>>>>>>The galaxy %d has force (%lf, %lf)\n", i, galaxy[i].forceX, galaxy[i].forceY);
+        printf(">>>>>>>>>The galaxy %d has force (%lf, %lf)\n", i, galaxy[i].forceX, galaxy[i].forceY);
     }
     //printf("Theta: %f\n", THETA);
     return TRUE;
