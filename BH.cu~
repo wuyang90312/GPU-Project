@@ -762,10 +762,12 @@ int main(int argc, char *argv[])
 
 
 	// print output
-	for (i = nbodies-10; i < nbodies; i++) {
-		printf("%d:   %f %f \n",i,  posx[i], posy[i]);
+	start_csv("all_pair.csv");
+	for (i = 0; i < nbodies; i++) {
+		//printf("%d:   %f %f \n",i,  posx[i], posy[i]);
+		write_csv(galaxy[i].forceX,  galaxy[i].forceY);
 	}
-
+    end_csv();
 	free(mass);
 	free(posx);
 	free(posy);

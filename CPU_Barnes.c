@@ -4,8 +4,8 @@
 #define     NUM     10000
 
 #define     EDGE     400
-// Actual theta is 0.5, but since our edge is halved, so the theta should be halved
-#define     THETA   0.05
+// Actual theta is 0.05, but since our edge is halved, so the theta should be halved
+#define     THETA   0.025
 
 
 int main()
@@ -15,7 +15,7 @@ int main()
     // Declare the pointer and allocate the memory
     Body* galaxy;
     galaxy = (Body*)calloc(NUM,sizeof(Body));
-//printf("The galaxy %d at (%lf, %lf) has a mss of %lf\n", 0, galaxy[0].posX, galaxy[0].posY, galaxy[0].mass);
+
     // read data from csv file
     if(read_csv(galaxy))
         return FALSE;   // if the function fail, return false
@@ -35,48 +35,27 @@ int main()
 
 int Barnes_Hut(Body* galaxy, int size)
 {
-    //double result[2];
     double center[2] = {0,0};
-    //printf("The galaxy %d at (%lf, %lf) has a mss of %lf\n", 0, galaxy[0].posX, galaxy[0].posY, galaxy[0].mass);
-    //printf("The galaxy %d at (%lf, %lf) has a mss of %lf\n", 1, galaxy[1].posX, galaxy[1].posY, galaxy[1].mass);
-    //Body entity, parent;
-    //printf("The entity at (%lf, %lf) has a mss of %lf\n", entity.posX, entity.posY, entity.mass);
-    //combine_quadtree( galaxy[0], galaxy[1], entity, entity, &parent);
-    //printf("The entity at (%lf, %lf) has a mss of %lf\n", parent.posX, parent.posY, parent.mass);
-   // if(cal_force(galaxy[0], galaxy[1],  result))
-   //     return FALSE;
-   // printf("\nThe force on x is %lf, on y is %lf\n", result[0], result[1]);
    
     quadtree_node* root;
     root = (quadtree_node*) calloc(1, sizeof(quadtree_node));
     
-   /* printf("The node state: %d\n", root->state);
-    printf("ul location : %p, ur location : %p, dl location : %p, dr location : %p\n", &root->ptr_child[0], &root->ptr_child[1], &root->ptr_child[2], &root->ptr_child[3]);
-    insert_node(root, &galaxy[0], center, EDGE);
-    printf("The entity of state %d at (%lf, %lf) has a mass of %lf\n", root->state, root->current_body->posX, root->current_body->posY, root->current_body->mass);
-    insert_node(root, &galaxy[1], center, EDGE);
-    printf("The node state: %d\n", root[0].state);
-    
-    printf("root: %f, child1: %f, child21: %f, child22: %d\n", root->current_body->posX, root->ptr_child[3]->current_body->posX, root->ptr_child[3]->ptr_child[0]->current_body->posX,root->ptr_child[2]==NULL);*/
-    
     // construct the Quad-tree
     for(int i=0; i < size; i++)
     {
-        //printf("\n>>>>>>>>>The galaxy %d at (%lf, %lf) has a mss of %lf\n", i, galaxy[i].posX, galaxy[i].posY, galaxy[i].mass);
         if(insert_node(root, &galaxy[i], center, EDGE)==FALSE)
-        {
             return FALSE;
-        }
     }
-    //printf("root: %f, child1: %f, child21: %f, child22: %d\n", root->current_body->posX, root->ptr_child[3]->current_body->posX, root->ptr_child[3]->ptr_child[0]->current_body->posX,root->ptr_child[3]->ptr_child[0]->current_body==&galaxy[0]);
+    
+    start_csv("cpu_barnes.csv");
     // Calculate the force on each node
     for(int i=0; i < size; i++)
     {
-        //printf("\n>>>>>>>>>The galaxy %d has force (%lf, %lf)\n", i, galaxy[i].forceX, galaxy[i].forceY);
         cal_force_tree(root, &galaxy[i],  EDGE);
-        printf(">>>>>>>>>The galaxy %d has force (%lf, %lf)\n", i, galaxy[i].forceX, galaxy[i].forceY);
+        //printf(">>>>>>>>>The galaxy %d has force (%lf, %lf)\n", i, galaxy[i].forceX, galaxy[i].forceY);
+        write_csv(galaxy[i].forceX,  galaxy[i].forceY);
     }
-    //printf("Theta: %f\n", THETA);
+    end_csv();
     return TRUE;
 }
 /*
