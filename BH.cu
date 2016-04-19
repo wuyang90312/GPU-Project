@@ -762,7 +762,7 @@ int main(int argc, char *argv[])
 
 
 	// print output
-	start_csv("all_pair.csv");
+	start_csv("gpu_barnes.csv");
 	for (i = 0; i < nbodies; i++) {
 		//printf("%d:   %f %f \n",i,  posx[i], posy[i]);
 		write_csv(posx[i],  posy[i]);
