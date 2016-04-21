@@ -1,7 +1,7 @@
 #include "all_pair.h"
 
 // Assume the number of planets are 10
-#define     NUM     10000
+#define     NUM     50000
 
 int main()
 {
@@ -28,7 +28,7 @@ int All_Pair(Body* galaxy, int size){
 
 	int i, j;
 	double result[2];
-	start_csv("all_pair.csv");
+	//start_csv("all_pair.csv");
 	for (i = 0; i < size; i++){
 		galaxy[i].forceX = 0;
 		galaxy[i].forceY = 0;
@@ -41,8 +41,8 @@ int All_Pair(Body* galaxy, int size){
 		
 		}
 		//printf("**********force %d : (%f, %f) \n", i, galaxy[i].forceX, galaxy[i].forceY);
-		write_csv(galaxy[i].forceX,  galaxy[i].forceY);
+		//write_csv(galaxy[i].forceX,  galaxy[i].forceY);
 	}
-	end_csv();
+	//end_csv();
 }
 

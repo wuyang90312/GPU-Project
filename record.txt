@@ -1,1 +1,2 @@
 gcc -o output CPU_Barnes.c CPU_Barnes.h utils.h -lm -std=c99
+gcc -o output2 all_pair.c all_pair.h utils.h -lm -std=c99

@@ -1,7 +1,7 @@
 #include "CPU_Barnes.h"
 
 // Assume the number of planets are 10
-#define     NUM     10000
+#define     NUM     50000
 
 #define     EDGE     400
 // Actual theta is 0.05, but since our edge is halved, so the theta should be halved
